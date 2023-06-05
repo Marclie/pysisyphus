@@ -241,12 +241,22 @@ class ChainOfStates:
             image_indices = list(image_indices) + [-1]
         assert len(images_to_calculate) <= len(self.images)
 
+
         # Parallel calculation with dask
         if self.scheduler:
             client = self.get_dask_client()
             self.log(client)
-            image_futures = client.map(self.par_image_calc, images_to_calculate)
-            self.set_images(image_indices, client.gather(image_futures))
+
+            # divide pal of each image by the number of workers available or available images
+            orig_pals = [image.calculator.pal for image in images_to_calculate] # save original pals to restore them later
+            n_workers = len(client.scheduler_info()["workers"]) # number of workers available
+            div_size = min(n_workers, len(images_to_calculate)) # choose the smaller one: number of workers or number of images
+            for image, pal in zip(images_to_calculate, orig_pals): 
+                new_pal = pal // div_size # divide pal by the number of workers
+                image.calculator.pal = new_pal if new_pal > 0 else 1 # set pal to 1 if it is smaller than 1
+
+            image_futures = client.map(self.par_image_calc, images_to_calculate) # map images to workers
+            self.set_images(image_indices, client.gather(image_futures)) # set images to the results of the calculations
         # Serial calculation
         else:
             for image in images_to_calculate:
@@ -290,6 +300,11 @@ class ChainOfStates:
         forces = np.array([image.forces for image in self.images])
         self.all_energies.append(energies)
         self.all_true_forces.append(forces)
+
+        # Reset pals if parallel calculation was used
+        if self.scheduler:
+            for image, pal in zip(self.images, orig_pals):
+                image.calculator.pal = pal
 
         return {
             "energies": energies,
