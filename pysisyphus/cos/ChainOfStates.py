@@ -247,16 +247,37 @@ class ChainOfStates:
             client = self.get_dask_client()
             self.log(client)
 
-            # divide pal of each image by the number of workers available or available images
+             divide pal of each image by the number of workers available or available images
             orig_pals = [image.calculator.pal for image in images_to_calculate] # save original pals to restore them later
             n_workers = len(client.scheduler_info()["workers"]) # number of workers available
-            div_size = min(n_workers, len(images_to_calculate)) # choose the smaller one: number of workers or number of images
-            for image, pal in zip(images_to_calculate, orig_pals): 
-                new_pal = pal // div_size # divide pal by the number of workers
-                image.calculator.pal = new_pal if new_pal > 0 else 1 # set pal to 1 if it is smaller than 1
 
-            image_futures = client.map(self.par_image_calc, images_to_calculate) # map images to workers
-            self.set_images(image_indices, client.gather(image_futures)) # set images to the results of the calculations
+            #split images to calculate into batches of n_workers and set pal of each image
+            n_batches = len(images_to_calculate) // n_workers
+            image_calculate_batches = []
+            for i in range(0, n_batches):
+                for image in images_to_calculate[i*n_workers:(i+1)*n_workers]:
+                    new_pal = image.calculator.pal // n_workers # divide pal by the number of workers
+                    image.calculator.pal = new_pal if new_pal > 0 else 1 # set pal to 1 if it is smaller than 1
+                # add batch of images to calculate to list
+                image_calculate_batches.append(images_to_calculate[i*n_workers:(i+1)*n_workers])
+
+            # grab the remaining images and set pal to lowest possible value
+            last_batch = images_to_calculate[n_batches*n_workers:]
+            n_last_batch = len(last_batch)
+            if n_last_batch > 0:
+                for image in last_batch:
+                    new_pal = image.calculator.pal // n_last_batch # divide pal by the number of workers
+                    image.calculator.pal = new_pal if new_pal > 0 else 1 # set pal to 1 if it is smaller than 1
+                # append the last batch to the list of batches
+                image_calculate_batches.append(images_to_calculate[n_batches*n_workers:])
+
+            # calculate images in batches
+            image_results = []
+            for batch in image_calculate_batches:
+                image_futures = client.map(self.par_image_calc, images_to_calculate) # map images to workers
+                image_results += client.gather(image_futures) # gather results from workers
+
+            self.set_images(image_indices, image_results) # set images to the results of the calculations
         # Serial calculation
         else:
             for image in images_to_calculate:
