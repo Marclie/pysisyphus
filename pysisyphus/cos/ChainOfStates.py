@@ -247,7 +247,7 @@ class ChainOfStates:
             client = self.get_dask_client()
             self.log(client)
 
-             divide pal of each image by the number of workers available or available images
+            # divide pal of each image by the number of workers available or available images
             orig_pals = [image.calculator.pal for image in images_to_calculate] # save original pals to restore them later
             n_workers = len(client.scheduler_info()["workers"]) # number of workers available
 
